@@ -46,6 +46,9 @@ from aphrodite import (
     MatchmakingAlgorithm,
     ReciprocalRecommender,
     TUMatchRecommender,
+    AsymmetricRecommender,
+    FairRecReranker,
+    NSWReranker,
     LightweightBackend,
 )
 from aphrodite.datasets import generate_dataset, THEMES
@@ -136,13 +139,21 @@ def _run_regime(name, themes, noise, backend, args, ks):
         backend=backend,
         apply_gender_filter=True,
     ).fit(profiles)
+    asym = AsymmetricRecommender(
+        backend=backend, homophily=args.homophily, apply_gender_filter=True
+    ).fit(profiles)
     tu = TUMatchRecommender(recon, beta=args.beta, n_iter=args.tu_iters)
+    fair = FairRecReranker(recon, alpha=args.alpha)
+    nsw = NSWReranker(recon)
 
     algos = {
         "ppr": ppr.recommend_all(k=kmax),
         "recon": recon.recommend_all(k=kmax),
         "multi_interest": multi.recommend_all(k=kmax),
+        "asym(self/pref)": asym.recommend_all(k=kmax),
         "recon+tu": tu.recommend_all(k=kmax),
+        "recon+fairrec": fair.recommend_all(k=kmax),
+        "recon+nsw": nsw.recommend_all(k=kmax),
     }
     results = {
         a: _all_metrics(recs, profiles, ground_truth, ks, all_users)
@@ -177,6 +188,21 @@ def _hypothesis_line(results):
         f"  -> TU vs RECON: Mutual {d_mut:+.1f}, Gini {d_gini:+.3f}, "
         f"MAP {d_map:+.3f}  [{verdict} the congestion hypothesis]"
     )
+    # Congestion-reranker ablation: which mechanism best trades MAP for fairness?
+    ablation = {
+        "recon+tu": results["recon+tu"],
+        "recon+fairrec": results["recon+fairrec"],
+        "recon+nsw": results["recon+nsw"],
+    }
+    best = min(ablation, key=lambda a: ablation[a]["Gini@10"])
+    print(
+        "  -> congestion rerankers (Gini | MAP | Recip): "
+        + "  ".join(
+            f"{a.split('+')[1]}={m['Gini@10']:.3f}/{m['MAP@10']:.3f}/{m['Recip@10']:.3f}"
+            for a, m in ablation.items()
+        )
+        + f"  [fairest exposure: {best.split('+')[1]}]"
+    )
 
 
 def _aggregation_sweep(profiles, ground_truth, all_users, backend, ks):
@@ -207,6 +233,12 @@ def main() -> None:
     parser.add_argument("--interests", type=int, default=3, help="facets/user")
     parser.add_argument("--beta", type=float, default=1.0, help="TU temperature")
     parser.add_argument("--tu-iters", type=int, default=50, help="IPFP iterations")
+    parser.add_argument(
+        "--homophily", type=float, default=0.5, help="asym self/pref blend (1=symmetric)"
+    )
+    parser.add_argument(
+        "--alpha", type=float, default=0.5, help="FairRec exposure-floor fraction"
+    )
     parser.add_argument(
         "--backend",
         choices=["lightweight", "word2vec_bert", "both"],

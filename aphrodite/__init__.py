@@ -32,6 +32,16 @@ from .matching import (
     tu_recommend_all,
     TUMatchRecommender,
 )
+from .asymmetric import AsymmetricRecommender
+from .fairness import (
+    fairrec,
+    nsw_rerank,
+    relevance_matrix,
+    fairrec_recommend_all,
+    nsw_recommend_all,
+    FairRecReranker,
+    NSWReranker,
+)
 from .metrics import (
     precision_at_k,
     recall_at_k,
@@ -91,6 +101,14 @@ __all__ = [
     "gender_mask",
     "tu_recommend_all",
     "TUMatchRecommender",
+    "AsymmetricRecommender",
+    "fairrec",
+    "nsw_rerank",
+    "relevance_matrix",
+    "fairrec_recommend_all",
+    "nsw_recommend_all",
+    "FairRecReranker",
+    "NSWReranker",
     "precision_at_k",
     "recall_at_k",
     "f1_at_k",
