@@ -73,18 +73,36 @@ algo = MatchmakingAlgorithm(backend=Word2VecBertBackend()).fit(profiles)
 
 ## Run the demo
 
+**Offline (no downloads):**
 ```bash
 python -m examples.run_matchmaking --n 90
 ```
-
 ```
-Users: 90  |  graph edges: 107  |  tau=0.7  d=0.85
+Users: 90  |  graph edges: 297  |  tau=0.7  d=0.85
 
         @5       @10      @15      @20
-P       0.833    0.668    0.482    0.379
-R       0.298    0.477    0.517    0.541
-F1      0.439    0.556    0.499    0.446
-MAP     0.297    0.465    0.487    0.496
+P       0.982    0.973    0.879    0.662
+R       0.351    0.695    0.942    0.945
+F1      0.517    0.811    0.910    0.778
+MAP     0.351    0.693    0.940    0.941
+```
+
+**Paper-faithful (Word2Vec 300d + BERT, requires `pip install -e '.[full]'`):**
+```python
+from aphrodite import MatchmakingAlgorithm
+from aphrodite.datasets import generate_dataset
+from aphrodite.embeddings import Word2VecBertBackend
+
+profiles, gt = generate_dataset(n_users=90, seed=42)
+be = Word2VecBertBackend()  # downloads models on first use (~1.7 GB + 80 MB)
+algo = MatchmakingAlgorithm(backend=be, threshold=0.70, damping=0.85).fit(profiles)
+```
+```
+Users: 90  |  graph edges: 590  |  tau=0.7  d=0.85
+
+        @5       @10      @15      @20
+F1      0.526    0.833    0.966    0.824
+MAP     0.357    0.714    1.000    1.000
 ```
 
 ## Tests
