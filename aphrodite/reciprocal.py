@@ -68,6 +68,90 @@ def harmonic_mean(a: float, b: float) -> float:
     return 2.0 * a * b / (a + b)
 
 
+# -- score normalization -------------------------------------------------------
+SCORE_NORMALIZERS: frozenset[str] = frozenset({"clip01", "unit", "none"})
+
+
+def _normalize_score(x: float, method: str) -> float:
+    """Map a raw directional score to a normalized scalar.
+
+    * ``"clip01"`` — clamp to ``[0, 1]`` (``max(0, min(1, x))``); for inputs
+      ``<= 1`` this equals the ``max(0, x)`` clamp used by :func:`harmonic_mean`.
+    * ``"unit"`` — affine map of ``[-1, 1]`` onto ``[0, 1]`` via
+      ``(clip(x, -1, 1) + 1) / 2``, preserving the ordering of negatives.
+    * ``"none"`` — identity, just ``float(x)``.
+    """
+    x = float(x)
+    if method == "clip01":
+        return max(0.0, min(1.0, x))
+    if method == "unit":
+        return (max(-1.0, min(1.0, x)) + 1.0) / 2.0
+    if method == "none":
+        return x
+    raise ValueError(
+        f"score_normalizer must be one of {sorted(SCORE_NORMALIZERS)!r}, got {method!r}"
+    )
+
+
+# -- reciprocal aggregation operators ------------------------------------------
+def _clamp01(x: float) -> float:
+    return max(0.0, min(1.0, float(x)))
+
+
+def agg_harmonic(x: float, y: float) -> float:
+    """Harmonic mean ``2xy / (x + y)``; ``0`` if either side is ``<= 0``."""
+    x, y = _clamp01(x), _clamp01(y)
+    if x <= 0.0 or y <= 0.0:
+        return 0.0
+    return 2.0 * x * y / (x + y)
+
+
+def agg_geometric(x: float, y: float) -> float:
+    """Geometric mean ``sqrt(x * y)`` — reciprocal, harsher than harmonic."""
+    x, y = _clamp01(x), _clamp01(y)
+    return float(np.sqrt(x * y))
+
+
+def agg_product(x: float, y: float) -> float:
+    """Product ``x * y`` — the harshest reciprocal operator."""
+    x, y = _clamp01(x), _clamp01(y)
+    return x * y
+
+
+def agg_min(x: float, y: float) -> float:
+    """Minimum — a pair is only as good as its least-interested side."""
+    x, y = _clamp01(x), _clamp01(y)
+    return min(x, y)
+
+
+def agg_arithmetic(x: float, y: float) -> float:
+    """Arithmetic mean ``(x + y) / 2`` — a NON-reciprocal control baseline."""
+    x, y = _clamp01(x), _clamp01(y)
+    return (x + y) / 2.0
+
+
+def agg_uninorm(x: float, y: float) -> float:
+    """Cross-ratio uninorm ``xy / (xy + (1-x)(1-y))``; ``0`` if denom is ``0``."""
+    x, y = _clamp01(x), _clamp01(y)
+    num = x * y
+    denom = num + (1.0 - x) * (1.0 - y)
+    if denom == 0.0:
+        return 0.0
+    return num / denom
+
+
+AGGREGATORS: dict[str, callable] = {
+    "harmonic": agg_harmonic,
+    "geometric": agg_geometric,
+    "product": agg_product,
+    "min": agg_min,
+    "arithmetic": agg_arithmetic,
+    "uninorm": agg_uninorm,
+}
+
+AGGREGATIONS: tuple[str, ...] = tuple(AGGREGATORS)
+
+
 def _farthest_first_kmeans(
     vectors: np.ndarray, k: int, iters: int = 10
 ) -> np.ndarray:
@@ -138,7 +222,18 @@ class ReciprocalRecommender:
     method:
         ``"recon"`` (directional weighted similarity) or ``"multi_interest"``
         (interest-facet coverage). Both combine the two directions with the
-        harmonic mean.
+        configured ``aggregation`` operator (harmonic mean by default).
+    aggregation:
+        Reciprocal score-combination operator (see :data:`AGGREGATORS`): one of
+        ``"harmonic"``, ``"geometric"``, ``"product"``, ``"min"``, ``"uninorm"``
+        (all reciprocal), or ``"arithmetic"`` (a non-reciprocal control
+        baseline). Applied to the two *normalized* directional scores.
+    score_normalizer:
+        How raw directional scores (roughly ``[-1, 1]``) are mapped before
+        aggregation: ``"clip01"`` (default, clamp to ``[0, 1]``), ``"unit"``
+        (affine ``[-1, 1] -> [0, 1]``) or ``"none"`` (identity). The defaults
+        (``aggregation="harmonic"``, ``score_normalizer="clip01"``) reproduce the
+        original ``harmonic_mean`` behaviour exactly.
     attributes:
         Attribute names to score over (defaults to the paper's four).
     apply_gender_filter:
@@ -162,9 +257,20 @@ class ReciprocalRecommender:
         apply_gender_filter: bool = True,
         n_interests: int = DEFAULT_N_INTERESTS,
         bio_weight: float = DEFAULT_BIO_WEIGHT,
+        aggregation: str = "harmonic",
+        score_normalizer: str = "clip01",
     ) -> None:
         if method not in METHODS:
             raise ValueError(f"method must be one of {METHODS}, got {method!r}")
+        if aggregation not in AGGREGATORS:
+            raise ValueError(
+                f"aggregation must be one of {AGGREGATIONS}, got {aggregation!r}"
+            )
+        if score_normalizer not in SCORE_NORMALIZERS:
+            raise ValueError(
+                f"score_normalizer must be one of {sorted(SCORE_NORMALIZERS)!r}, "
+                f"got {score_normalizer!r}"
+            )
         self.backend = backend if backend is not None else LightweightBackend()
         self.preprocessor = preprocessor if preprocessor is not None else Preprocessor()
         self.method = method
@@ -172,6 +278,8 @@ class ReciprocalRecommender:
         self.apply_gender_filter = apply_gender_filter
         self.n_interests = int(n_interests)
         self.bio_weight = float(bio_weight)
+        self.aggregation = aggregation
+        self.score_normalizer = score_normalizer
 
         self.profiles_: list[UserProfile] = []
         self.profiles_by_id_: dict[str, UserProfile] = {}
@@ -295,20 +403,25 @@ class ReciprocalRecommender:
 
     # -- reciprocal scoring + recommendation ---------------------------------
     def score_pair(self, a_id: str, b_id: str) -> float:
-        """Reciprocal score of a pair = harmonic mean of both directions.
+        """Reciprocal score of a pair via the configured aggregation operator.
 
-        Symmetric by construction (``score_pair(a, b) == score_pair(b, a)``):
-        match quality is a property of the pair. The reciprocity comes from the
-        harmonic mean, which requires *both* users to be interested.
+        Both directional scores are normalized with ``self.score_normalizer`` and
+        then combined with ``AGGREGATORS[self.aggregation]``. Symmetric by
+        construction (``score_pair(a, b) == score_pair(b, a)``): match quality is
+        a property of the pair. With the defaults (``aggregation="harmonic"``,
+        ``score_normalizer="clip01"``) this is identical to
+        ``harmonic_mean(s(A->B), s(B->A))``.
         """
         self._check_fitted()
         if a_id not in self.profiles_by_id_:
             raise KeyError(f"Unknown user_id: {a_id!r}")
         if b_id not in self.profiles_by_id_:
             raise KeyError(f"Unknown user_id: {b_id!r}")
-        return harmonic_mean(
-            self._directional(a_id, b_id), self._directional(b_id, a_id)
-        )
+        da = self._directional(a_id, b_id)
+        db = self._directional(b_id, a_id)
+        na = _normalize_score(da, self.score_normalizer)
+        nb = _normalize_score(db, self.score_normalizer)
+        return AGGREGATORS[self.aggregation](na, nb)
 
     def score(self, target_id: str) -> dict[Hashable, float]:
         """Reciprocal score of ``target_id`` against every other user."""
@@ -349,6 +462,16 @@ class ReciprocalRecommender:
 __all__ = [
     "ReciprocalRecommender",
     "harmonic_mean",
+    "_normalize_score",
+    "SCORE_NORMALIZERS",
+    "agg_harmonic",
+    "agg_geometric",
+    "agg_product",
+    "agg_min",
+    "agg_arithmetic",
+    "agg_uninorm",
+    "AGGREGATORS",
+    "AGGREGATIONS",
     "METHODS",
     "DEFAULT_N_INTERESTS",
     "DEFAULT_BIO_WEIGHT",
