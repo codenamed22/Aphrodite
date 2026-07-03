@@ -15,6 +15,13 @@ from .similarity import (
 from .graph import build_graph, DEFAULT_THRESHOLD
 from .ppr import personalized_pagerank, rank_matches, DEFAULT_DAMPING
 from .matchmaker import MatchmakingAlgorithm
+from .reciprocal import (
+    ReciprocalRecommender,
+    harmonic_mean,
+    METHODS,
+    DEFAULT_N_INTERESTS,
+    DEFAULT_BIO_WEIGHT,
+)
 from .metrics import (
     precision_at_k,
     recall_at_k,
@@ -22,6 +29,7 @@ from .metrics import (
     average_precision_at_k,
     mean_average_precision_at_k,
     evaluate_at_ks,
+    reciprocity_rate,
 )
 
 __version__ = "0.1.0"
@@ -43,11 +51,17 @@ __all__ = [
     "rank_matches",
     "DEFAULT_DAMPING",
     "MatchmakingAlgorithm",
+    "ReciprocalRecommender",
+    "harmonic_mean",
+    "METHODS",
+    "DEFAULT_N_INTERESTS",
+    "DEFAULT_BIO_WEIGHT",
     "precision_at_k",
     "recall_at_k",
     "f1_at_k",
     "average_precision_at_k",
     "mean_average_precision_at_k",
     "evaluate_at_ks",
+    "reciprocity_rate",
     "__version__",
 ]

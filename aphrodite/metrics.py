@@ -7,7 +7,7 @@ of ground-truth relevant user ids.
 
 from __future__ import annotations
 
-from typing import Hashable, Iterable, Sequence
+from typing import Hashable, Iterable, Mapping, Sequence
 
 
 def _relevant_set(relevant: Iterable[Hashable]) -> set[Hashable]:
@@ -117,6 +117,33 @@ def evaluate_at_ks(
     return results
 
 
+def reciprocity_rate(
+    recommendations: Mapping[Hashable, Sequence[Hashable]], k: int
+) -> float:
+    """Fraction of top-``k`` recommendations that are mutual.
+
+    For every user ``a`` and each ``b`` in ``a``'s top-``k`` list, the pair
+    counts as reciprocal when ``a`` also appears in ``b``'s top-``k`` list. This
+    measures how bilaterally consistent a recommender is — a property a dating
+    app cares about (a suggested match is only useful if it is offered to *both*
+    people). Returns a value in ``[0, 1]``; ``0.0`` when there are no
+    recommendations.
+    """
+    if k <= 0:
+        return 0.0
+    topk = {a: set(list(recs)[:k]) for a, recs in recommendations.items()}
+    total = 0
+    mutual = 0
+    for a, recs in topk.items():
+        for b in recs:
+            total += 1
+            if a in topk.get(b, set()):
+                mutual += 1
+    if total == 0:
+        return 0.0
+    return mutual / total
+
+
 __all__ = [
     "precision_at_k",
     "recall_at_k",
@@ -124,4 +151,5 @@ __all__ = [
     "average_precision_at_k",
     "mean_average_precision_at_k",
     "evaluate_at_ks",
+    "reciprocity_rate",
 ]
