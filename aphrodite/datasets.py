@@ -85,11 +85,48 @@ def _sample(rng: random.Random, pool: Iterable[str], lo: int, hi: int) -> list[s
     return rng.sample(pool, count)
 
 
+GENDERS: tuple[str, ...] = ("man", "woman", "non-binary")
+
+
+def _assign_gender_and_seeking(rng: random.Random) -> tuple[str, frozenset[str]]:
+    """Assign a gender identity and a realistic ``seeking`` preference set.
+
+    A rough orientation mix is used: mostly heterosexual, with a minority of
+    homosexual and bisexual users, plus non-binary users who typically seek
+    across genders. ``seeking`` values are drawn from :data:`GENDERS`.
+    """
+    gender = rng.choices(GENDERS, weights=(0.47, 0.47, 0.06))[0]
+    roll = rng.random()
+    if gender == "man":
+        if roll < 0.75:        # heterosexual
+            seeking = {"woman"}
+        elif roll < 0.90:      # homosexual
+            seeking = {"man"}
+        else:                  # bisexual / open
+            seeking = {"man", "woman", "non-binary"}
+    elif gender == "woman":
+        if roll < 0.75:
+            seeking = {"man"}
+        elif roll < 0.90:
+            seeking = {"woman"}
+        else:
+            seeking = {"man", "woman", "non-binary"}
+    else:  # non-binary
+        if roll < 0.5:
+            seeking = {"man", "woman", "non-binary"}
+        elif roll < 0.75:
+            seeking = {"woman"}
+        else:
+            seeking = {"man"}
+    return gender, frozenset(seeking)
+
+
 def generate_dataset(
     n_users: int = 60,
     themes: tuple[Theme, ...] = THEMES,
     noise: float = 0.15,
     seed: int = 42,
+    with_gender: bool = False,
 ) -> tuple[list[UserProfile], dict[str, set[str]]]:
     """Generate synthetic profiles plus their ground-truth match sets.
 
@@ -104,11 +141,17 @@ def generate_dataset(
         the matching problem non-trivial.
     seed:
         RNG seed for reproducibility.
+    with_gender:
+        If True, assign each profile a ``gender`` identity and a ``seeking``
+        preference set, and make the ground truth **gender-aware**: a match for
+        user ``u`` is another user in the same interest cluster who is *also*
+        mutually gender-compatible with ``u``. If False (default, paper-faithful),
+        gender fields are left empty and ground truth is cluster membership only.
 
     Returns
     -------
     (profiles, ground_truth)
-        ``ground_truth[user_id]`` is the set of other users sharing the theme.
+        ``ground_truth[user_id]`` is the set of valid matches for that user.
     """
     rng = random.Random(seed)
     profiles: list[UserProfile] = []
@@ -147,6 +190,10 @@ def generate_dataset(
             f"my free time I enjoy {hobbies[0]}."
         )
 
+        gender, seeking = ("", frozenset())
+        if with_gender:
+            gender, seeking = _assign_gender_and_seeking(rng)
+
         profiles.append(
             UserProfile(
                 user_id=uid,
@@ -155,14 +202,27 @@ def generate_dataset(
                 hobbies=", ".join(hobbies),
                 occupation=", ".join(occupation),
                 biography=biography,
+                gender=gender,
+                seeking=seeking,
             )
         )
         cluster_of[uid] = theme_idx
 
+    profile_by_id = {p.user_id: p for p in profiles}
     ground_truth: dict[str, set[str]] = {}
     for uid, c in cluster_of.items():
-        ground_truth[uid] = {other for other, oc in cluster_of.items()
-                             if oc == c and other != uid}
+        same_cluster = {
+            other for other, oc in cluster_of.items() if oc == c and other != uid
+        }
+        if with_gender:
+            # A valid match must also be mutually gender-compatible.
+            me = profile_by_id[uid]
+            same_cluster = {
+                other
+                for other in same_cluster
+                if me.is_compatible_with(profile_by_id[other])
+            }
+        ground_truth[uid] = same_cluster
     return profiles, ground_truth
 
 
@@ -188,6 +248,7 @@ def load_dataset(path: str | Path) -> tuple[list[UserProfile], dict[str, set[str
 __all__ = [
     "Theme",
     "THEMES",
+    "GENDERS",
     "generate_dataset",
     "save_dataset",
     "load_dataset",

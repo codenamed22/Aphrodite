@@ -25,11 +25,20 @@ def main() -> None:
     parser.add_argument("--damping", type=float, default=0.85, help="PPR damping d")
     parser.add_argument("--seed", type=int, default=42, help="dataset RNG seed")
     parser.add_argument("--target", type=str, default=None, help="show matches for one user")
+    parser.add_argument("--with-gender", action="store_true",
+                        help="assign genders/preferences and filter matches (dating mode)")
     args = parser.parse_args()
 
-    profiles, ground_truth = generate_dataset(n_users=args.n, seed=args.seed)
-    algo = MatchmakingAlgorithm(threshold=args.threshold, damping=args.damping)
+    profiles, ground_truth = generate_dataset(
+        n_users=args.n, seed=args.seed, with_gender=args.with_gender
+    )
+    algo = MatchmakingAlgorithm(
+        threshold=args.threshold,
+        damping=args.damping,
+        apply_gender_filter=args.with_gender,
+    )
     algo.fit(profiles)
+    by_id = {p.user_id: p for p in profiles}
 
     ks = (5, 10, 15, 20)
     ranked_lists = []
@@ -40,8 +49,9 @@ def main() -> None:
 
     metrics = evaluate_at_ks(ranked_lists, relevant_sets, ks=ks)
 
+    mode = "dating (gender-filtered)" if args.with_gender else "paper-faithful"
     print(f"Users: {len(profiles)}  |  graph edges: {algo.graph_.number_of_edges()}  "
-          f"|  tau={args.threshold}  d={args.damping}\n")
+          f"|  tau={args.threshold}  d={args.damping}  |  mode: {mode}\n")
     header = "        " + "".join(f"@{k:<8}" for k in ks)
     print(header)
     for metric in ("P", "R", "F1", "MAP"):
@@ -49,8 +59,16 @@ def main() -> None:
         print(f"{metric:<6}  {row}")
 
     if args.target:
+        t = by_id[args.target]
         matches = algo.recommend(args.target, k=10)
-        print(f"\nTop matches for {args.target}: {matches}")
+        if args.with_gender:
+            print(f"\nTarget {args.target}: {t.gender}, seeking {sorted(t.seeking)}")
+            print("Top matches:")
+            for r in matches:
+                m = by_id[r]
+                print(f"  {r}  ({m.gender}, seeking {sorted(m.seeking)})")
+        else:
+            print(f"\nTop matches for {args.target}: {matches}")
         print(f"Ground-truth matches: {sorted(ground_truth[args.target])}")
 
 

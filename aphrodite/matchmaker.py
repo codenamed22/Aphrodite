@@ -45,6 +45,14 @@ class MatchmakingAlgorithm:
         ``d`` damping/restart weight for Personalized PageRank (default 0.85).
     skip_empty:
         If True, empty attribute pairs are excluded from the aggregated score.
+    apply_gender_filter:
+        If True (default), recommendations are restricted to users who are
+        mutually gender-compatible with the target (see
+        :meth:`UserProfile.is_compatible_with`). The similarity graph itself is
+        built gender-agnostically so that high-order relationships still
+        propagate through same-gender intermediaries; only the final ranked
+        list is filtered. Set to False to ignore gender entirely (paper-faithful
+        behaviour).
     """
 
     def __init__(
@@ -55,6 +63,7 @@ class MatchmakingAlgorithm:
         damping: float = DEFAULT_DAMPING,
         attributes: Sequence[str] = ATTRIBUTES,
         skip_empty: bool = False,
+        apply_gender_filter: bool = True,
     ) -> None:
         self.backend = backend if backend is not None else LightweightBackend()
         self.preprocessor = preprocessor if preprocessor is not None else Preprocessor()
@@ -62,8 +71,10 @@ class MatchmakingAlgorithm:
         self.damping = damping
         self.attributes = tuple(attributes)
         self.skip_empty = skip_empty
+        self.apply_gender_filter = apply_gender_filter
 
         self.profiles_: list[UserProfile] = []
+        self.profiles_by_id_: dict[str, UserProfile] = {}
         self.node_ids_: list[str] = []
         self.embeddings_: list[dict[str, np.ndarray]] = []
         self.similarity_matrix_: np.ndarray | None = None
@@ -90,6 +101,7 @@ class MatchmakingAlgorithm:
         """Run stages 1-2: embed profiles, build similarity matrix and graph."""
         validate_profiles(profiles)
         self.profiles_ = list(profiles)
+        self.profiles_by_id_ = {p.user_id: p for p in self.profiles_}
         self.node_ids_ = [p.user_id for p in self.profiles_]
         self.embeddings_ = [self.embed_profile(p) for p in self.profiles_]
         self.similarity_matrix_ = pairwise_similarity_matrix(
@@ -113,10 +125,36 @@ class MatchmakingAlgorithm:
             raise KeyError(f"Unknown target user_id: {target_id!r}")
         return personalized_pagerank(graph, target_id, damping=self.damping)
 
+    def _incompatible_ids(self, target_id: str) -> set[Hashable]:
+        """Return the set of user ids that are NOT gender-compatible with target.
+
+        Returns an empty set when gender filtering is disabled. Compatibility is
+        mutual (see :meth:`UserProfile.is_compatible_with`).
+        """
+        if not self.apply_gender_filter:
+            return set()
+        target = self.profiles_by_id_.get(target_id)
+        if target is None:
+            return set()
+        incompatible: set[Hashable] = set()
+        for uid, profile in self.profiles_by_id_.items():
+            if uid == target_id:
+                continue
+            if not target.is_compatible_with(profile):
+                incompatible.add(uid)
+        return incompatible
+
     def recommend(self, target_id: str, k: int | None = 10) -> list[Hashable]:
-        """Return the top-``k`` matching user ids for ``target_id`` (§3.3.2)."""
+        """Return the top-``k`` matching user ids for ``target_id`` (§3.3.2).
+
+        When gender filtering is enabled, only users mutually compatible with the
+        target's gender preferences are returned; PPR scores are computed on the
+        full graph first so high-order relationships are preserved.
+        """
         scores = self.score(target_id)
-        return rank_matches(scores, target=target_id, k=k)
+        return rank_matches(
+            scores, target=target_id, k=k, exclude=self._incompatible_ids(target_id)
+        )
 
     def recommend_all(self, k: int | None = 10) -> dict[str, list[Hashable]]:
         """Convenience: recommendations for every user."""

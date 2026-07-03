@@ -39,6 +39,30 @@ Embeddings sit behind one interface (`EmbeddingBackend`) with two backends:
 * **`Word2VecBertBackend`** — paper-faithful Word2Vec (GoogleNews 300d) + BERT
   sentence embeddings. Install the heavy extras: `pip install -e '.[full]'`.
 
+### Gender & preferences (dating-app extension)
+
+The paper is a general profile-matching algorithm with no notion of gender. For
+dating use, `UserProfile` adds two fields (never embedded):
+
+* `gender` — the user's gender identity (e.g. `"man"`, `"woman"`, `"non-binary"`).
+* `seeking` — a set of genders the user wants to match with; empty = open to all.
+
+When `apply_gender_filter=True` (the default), the similarity graph is still
+built **gender-agnostically** — so Personalized PageRank can discover a great
+match *through* a same-gender intermediary (high-order relationship) — and only
+the **final ranked list** is restricted to users who are *mutually* compatible
+(`a.is_compatible_with(b)`). Set `apply_gender_filter=False` for the original
+paper behaviour.
+
+```python
+from aphrodite import MatchmakingAlgorithm
+from aphrodite.datasets import generate_dataset
+
+profiles, gt = generate_dataset(n_users=90, seed=42, with_gender=True)
+algo = MatchmakingAlgorithm(apply_gender_filter=True).fit(profiles)
+algo.recommend("u000", k=10)   # only gender-compatible users returned
+```
+
 ---
 
 ## Install
