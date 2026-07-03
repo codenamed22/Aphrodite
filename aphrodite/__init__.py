@@ -31,6 +31,15 @@ from .metrics import (
     evaluate_at_ks,
     reciprocity_rate,
 )
+from .calibration import (
+    similarity_distribution,
+    graph_health,
+    scan_thresholds,
+    suggest_threshold,
+    compute_similarity_matrix,
+    tune_threshold_supervised,
+    DEFAULT_TAU_GRID,
+)
 
 __version__ = "0.1.0"
 
@@ -63,5 +72,12 @@ __all__ = [
     "mean_average_precision_at_k",
     "evaluate_at_ks",
     "reciprocity_rate",
+    "similarity_distribution",
+    "graph_health",
+    "scan_thresholds",
+    "suggest_threshold",
+    "compute_similarity_matrix",
+    "tune_threshold_supervised",
+    "DEFAULT_TAU_GRID",
     "__version__",
 ]
