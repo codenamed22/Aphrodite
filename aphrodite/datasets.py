@@ -119,8 +119,20 @@ def generate_dataset(
         theme = themes[theme_idx]
         uid = f"u{i:03d}"
 
-        interests = _sample(rng, theme.interests, 3, 5)
-        hobbies = _sample(rng, theme.hobbies, 2, 4)
+        # Guarantee 3 shared "core" tokens for all users in the same theme so
+        # that within-cluster cosine similarity reliably exceeds tau=0.70 even
+        # with hash-based offline embeddings.  1-2 "personal" extra words add
+        # variety and make the task non-trivial.
+        n_core = min(3, len(theme.interests))
+        core_interests = list(theme.interests[:n_core])
+        extra = _sample(rng, theme.interests[n_core:], 1, 2)
+        interests = core_interests + extra
+
+        n_core_h = min(2, len(theme.hobbies))
+        core_hobbies = list(theme.hobbies[:n_core_h])
+        extra_h = _sample(rng, theme.hobbies[n_core_h:], 1, 2)
+        hobbies = core_hobbies + extra_h
+
         occupation = _sample(rng, theme.occupations, 1, 2)
 
         # Inject occasional cross-theme noise.
